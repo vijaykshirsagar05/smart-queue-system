@@ -1,112 +1,137 @@
 "use client"
 
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { io } from "socket.io-client"
-import { useState, useEffect, useMemo } from "react"
-import axios from "axios"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import api, { SOCKET_URL } from "@/src/lib/api"
+import { DEPARTMENTS, QueueToken, getDepartmentLabel, getStatusClass, getStatusLabel } from "@/src/lib/queue"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar"
-import { Separator } from "@/components/ui/separator"
-import { Switch } from "@/components/ui/switch"
-// NEW: Imported Select components for the department dropdown
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { 
-  Users, BarChart3, LayoutDashboard, UserCog, Settings, 
-  Bell, LogOut, Search, ChevronRight, Clock, 
-  CheckCircle2, Activity, Zap, ShieldCheck, Trash2,
-  TrendingUp, Monitor
+import { Separator } from "@/components/ui/separator"
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar"
+import { Switch } from "@/components/ui/switch"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  Activity,
+  BarChart3,
+  Bell,
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  LayoutDashboard,
+  LogOut,
+  Monitor,
+  Search,
+  Settings,
+  ShieldCheck,
+  Trash2,
+  UserCog,
+  Users,
+  Zap,
 } from "lucide-react"
 
 interface AdminDashboardProps {
   onLogout: () => void
 }
 
+const menuItems = [
+  { title: "Dashboard", icon: LayoutDashboard },
+  { title: "Queue Management", icon: Users },
+  { title: "Analytics", icon: BarChart3 },
+  { title: "Staff", icon: UserCog },
+  { title: "Notifications", icon: Bell },
+  { title: "Settings", icon: Settings },
+]
+
 export function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState("Dashboard")
   const [searchTerm, setSearchTerm] = useState("")
-  const [queue, setQueue] = useState<any[]>([])
+  const [queue, setQueue] = useState<QueueToken[]>([])
   const [currentToken, setCurrentToken] = useState("---")
   const [loading, setLoading] = useState(false)
   const [notifications, setNotifications] = useState(true)
-  
-  // NEW: State to track which department this specific admin is managing
   const [adminDepartment, setAdminDepartment] = useState("general")
-   
-useEffect(() => {
-    const socket = io("http://localhost:5000");
-    
-    socket.on("queueUpdated", () => {
-      fetchLiveQueue(); // Admin uses fetchLiveQueue
-    });
+  const [notice, setNotice] = useState("")
+  const [syncState, setSyncState] = useState<"online" | "offline">("online")
+
+  const fetchLiveQueue = useCallback(async () => {
+    try {
+      const res = await api.get<QueueToken[]>("/queue/status")
+      const tokens = res.data
+      const beingServed = tokens.find(
+        (token) => token.status === "called" && String(token.department) === adminDepartment
+      )
+
+      setQueue(tokens)
+      setCurrentToken(beingServed ? beingServed.token_number : "---")
+      setSyncState("online")
+    } catch {
+      setSyncState("offline")
+    }
+  }, [adminDepartment])
+
+  useEffect(() => {
+    const socket = io(SOCKET_URL)
+    socket.on("queueUpdated", fetchLiveQueue)
 
     return () => {
-      socket.disconnect();
-    };
-  }, []);
-
-  const menuItems = [
-    { title: "Dashboard", icon: LayoutDashboard },
-    { title: "Queue Management", icon: Users },
-    { title: "Analytics", icon: BarChart3 },
-    { title: "Staff", icon: UserCog },
-    { title: "Notifications", icon: Bell },
-    { title: "Settings", icon: Settings },
-  ]
-
-  const fetchLiveQueue = async () => {
-    try {
-      const res = await axios.get('http://localhost:5000/api/queue/status')
-      setQueue(res.data)
-      
-      // LOGIC FIX: Only show the "Currently Serving" token for the active department
-      const beingServed = res.data.find((t: any) => t.status === 'called' && String(t.department) === adminDepartment)
-      setCurrentToken(beingServed ? beingServed.token_number : "---")
-    } catch (err) {
-      console.error("Backend offline")
+      socket.disconnect()
     }
-  }
-
-  // Refetch the queue whenever the admin switches their active department
-  useEffect(() => {
-    fetchLiveQueue()
-  }, [adminDepartment])
+  }, [fetchLiveQueue])
 
   useEffect(() => {
     fetchLiveQueue()
     const interval = setInterval(fetchLiveQueue, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [fetchLiveQueue])
 
   const analytics = useMemo(() => {
-    const waiting = queue.filter(t => t.status === 'waiting').length
-    const completed = queue.filter(t => t.status === 'completed' || t.status === 'called').length
-    
-    // Calculates wait time based on the longest departmental line
-    const deptCounts: Record<string, number> = {}
-    queue.forEach(t => {
-      if (t.status === 'waiting') {
-        deptCounts[t.department] = (deptCounts[t.department] || 0) + 1
-      }
-    })
-    
-    const maxLine = Object.values(deptCounts).length > 0 ? Math.max(...Object.values(deptCounts)) : 0
-    return { waiting, completed, avgWait: maxLine * 5 }
+    const waiting = queue.filter((token) => token.status === "waiting").length
+    const inService = queue.filter((token) => token.status === "called").length
+    const departmentCounts = DEPARTMENTS.map((department) => ({
+      ...department,
+      count: queue.filter((token) => token.status === "waiting" && token.department === department.value).length,
+    }))
+    const maxLine = Math.max(0, ...departmentCounts.map((department) => department.count))
+
+    return {
+      waiting,
+      inService,
+      avgWait: maxLine * 5,
+      departmentCounts,
+    }
   }, [queue])
 
   const handleCallNext = async () => {
     setLoading(true)
+    setNotice("")
+
     try {
-      // LOGIC FIX: Send the currently selected department to the backend
-      await axios.post('http://localhost:5000/api/admin/next', {
-        department: adminDepartment
+      const res = await api.post("/admin/next", {
+        department: adminDepartment,
       })
-      if (notifications) { new Audio('/ding.mp3').play().catch(() => {}); }
-      await fetchLiveQueue() 
-    } catch (err) {
-      alert("Queue for this department is empty or backend error")
+
+      setNotice(`${res.data.token} called for ${getDepartmentLabel(adminDepartment)}.`)
+      await fetchLiveQueue()
+    } catch (error) {
+      const response = (error as { response?: { data?: { message?: string } } }).response
+      setNotice(response?.data?.message || "Unable to call the next token.")
     } finally {
       setLoading(false)
     }
@@ -115,44 +140,40 @@ useEffect(() => {
   const filteredQueue = queue.filter(
     (item) =>
       String(item.token_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      String(item.department || "").toLowerCase().includes(searchTerm.toLowerCase())
+      String(item.department || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      String(item.status || "").toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   return (
     <SidebarProvider>
-      <div className="dark min-h-screen flex w-full bg-[#09090b] text-slate-200 selection:bg-indigo-500/30">
-        
-        <Sidebar className="border-r border-white/5 bg-[#09090b]/50 backdrop-blur-xl">
-          <SidebarHeader className="p-6">
+      <div className="flex min-h-screen w-full bg-[#f6f8fb] text-slate-950">
+        <Sidebar className="border-r border-slate-200 bg-white">
+          <SidebarHeader className="p-5">
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                <Zap className="h-5 w-5 text-white fill-white" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-950 text-white">
+                <Zap className="h-5 w-5" />
               </div>
               <div>
-                <span className="text-xl font-black tracking-tight text-white">SmartQ</span>
-                <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Admin Control</p>
+                <span className="text-lg font-bold tracking-tight">SmartQ</span>
+                <p className="text-xs font-semibold uppercase text-slate-500">Admin control</p>
               </div>
             </div>
           </SidebarHeader>
-          
+
           <SidebarContent className="px-3">
             <SidebarGroup>
-              <SidebarGroupLabel className="text-slate-500 text-[10px] font-bold uppercase px-4 mb-2">Main Terminal</SidebarGroupLabel>
+              <SidebarGroupLabel className="px-3 text-xs font-bold uppercase text-slate-500">Workspace</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {menuItems.map((item) => (
-                    <SidebarMenuItem key={item.title} className="mb-1">
-                      <SidebarMenuButton 
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton
                         isActive={activeTab === item.title}
                         onClick={() => setActiveTab(item.title)}
-                        className={`h-11 rounded-lg px-4 transition-all duration-200 ${
-                          activeTab === item.title 
-                          ? "bg-indigo-600/10 text-indigo-400 border border-indigo-500/20" 
-                          : "hover:bg-white/5 text-slate-400"
-                        }`}
+                        className="h-10 rounded-lg px-3 font-semibold data-[active=true]:bg-blue-50 data-[active=true]:text-blue-700"
                       >
-                        <item.icon className={`h-4 w-4 ${activeTab === item.title ? "text-indigo-400" : ""}`} />
-                        <span className="font-semibold text-sm">{item.title}</span>
+                        <item.icon className="h-4 w-4" />
+                        <span>{item.title}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}
@@ -161,257 +182,351 @@ useEffect(() => {
             </SidebarGroup>
           </SidebarContent>
 
-          <SidebarFooter className="p-6">
-            <Button variant="ghost" onClick={onLogout} className="w-full justify-start text-slate-400 hover:text-red-400 hover:bg-red-400/10 rounded-xl group transition-all">
-              <LogOut className="mr-3 h-4 w-4 group-hover:-translate-x-1 transition-transform" /> 
-              <span className="font-bold text-sm">Logout</span>
+          <SidebarFooter className="p-4">
+            <Button variant="ghost" onClick={onLogout} className="h-10 w-full justify-start rounded-lg text-slate-600 hover:text-red-600">
+              <LogOut className="mr-2 h-4 w-4" />
+              Logout
             </Button>
           </SidebarFooter>
         </Sidebar>
 
         <SidebarInset className="flex-1 bg-transparent">
-          <header className="sticky top-0 z-40 bg-[#09090b]/80 backdrop-blur-md border-b border-white/5 px-8 h-20 flex items-center justify-between">
+          <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200 bg-white/95 px-4 lg:px-8">
             <div className="flex items-center gap-4">
-              <SidebarTrigger className="text-slate-400 hover:text-white" />
-              <Separator orientation="vertical" className="h-6 bg-white/10" />
-              <h1 className="text-lg font-bold tracking-tight text-white">{activeTab}</h1>
+              <SidebarTrigger className="rounded-lg text-slate-500" />
+              <Separator orientation="vertical" className="h-6" />
+              <div>
+                <h1 className="text-lg font-bold tracking-tight">{activeTab}</h1>
+                <p className="text-xs font-medium text-slate-500">{getDepartmentLabel(adminDepartment)}</p>
+              </div>
             </div>
-            <div className="flex items-center gap-4 bg-white/5 px-4 py-2 rounded-full border border-white/5">
-                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">Live Connection: Optimal</span>
-            </div>
+            <Badge className={syncState === "online" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}>
+              {syncState === "online" ? "Live connection" : "Backend offline"}
+            </Badge>
           </header>
 
-          <main className="p-8 max-w-[1600px] mx-auto w-full">
-            
+          <main className="mx-auto w-full max-w-7xl space-y-6 p-4 lg:p-8">
             {activeTab === "Dashboard" && (
-              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {[
-                    { label: "Waiting", val: analytics.waiting, icon: Users, color: "text-indigo-400", bg: "bg-indigo-400/10" },
-                    { label: "Completed", val: analytics.completed, icon: CheckCircle2, color: "text-emerald-400", bg: "bg-emerald-400/10" },
-                    { label: "Est. Wait Time", val: `${analytics.avgWait}m`, icon: Clock, color: "text-orange-400", bg: "bg-orange-400/10" }
-                  ].map((stat, i) => (
-                    <Card key={i} className="bg-white/[0.02] border-white/5 rounded-3xl overflow-hidden hover:border-white/10 transition-all">
-                      <CardContent className="p-6 flex items-center justify-between">
-                        <div>
-                          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">{stat.label}</p>
-                          <p className={`text-4xl font-black ${stat.color}`}>{stat.val}</p>
-                        </div>
-                        <div className={`h-14 w-14 rounded-2xl ${stat.bg} flex items-center justify-center`}>
-                          <stat.icon className={`h-7 w-7 ${stat.color}`} />
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+              <>
+                <div className="grid gap-4 md:grid-cols-3">
+                  <MetricCard label="Waiting" value={analytics.waiting} icon={Users} tone="blue" />
+                  <MetricCard label="In service" value={analytics.inService} icon={CheckCircle2} tone="emerald" />
+                  <MetricCard label="Est. wait" value={`${analytics.avgWait}m`} icon={Clock} tone="amber" />
                 </div>
 
-                <Card className="border-0 bg-gradient-to-br from-indigo-600/20 via-transparent to-transparent rounded-[2.5rem] overflow-hidden shadow-2xl">
-                  {/* LOGIC FIX: Added the Department Selector directly into the Header of the controller */}
-                  <CardHeader className="pb-2 flex flex-row items-center justify-between">
-                    <CardTitle className="text-indigo-400 text-xs font-black uppercase tracking-[0.3em] flex items-center gap-3">
-                        <Activity className="h-4 w-4" /> Real-Time Controller
-                    </CardTitle>
-                    <div className="flex items-center gap-3">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest hidden sm:inline-block">Active Counter:</span>
+                <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+                  <Card className="rounded-lg border-slate-200 shadow-sm">
+                    <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <CardTitle className="flex items-center gap-2">
+                          <Activity className="h-5 w-5 text-blue-700" />
+                          Counter controller
+                        </CardTitle>
+                        <CardDescription>Call the next waiting token for the selected department.</CardDescription>
+                      </div>
                       <Select value={adminDepartment} onValueChange={setAdminDepartment}>
-                        <SelectTrigger className="w-[180px] h-9 bg-white/5 border-white/10 text-xs font-bold rounded-lg text-slate-200">
-                          <SelectValue placeholder="Select Department" />
+                        <SelectTrigger className="h-10 w-full rounded-lg sm:w-[220px]">
+                          <SelectValue placeholder="Select department" />
                         </SelectTrigger>
-                        <SelectContent className="bg-[#121212] border-white/10 text-slate-200 rounded-xl">
-                           <SelectItem value="general" className="rounded-xl py-3 px-4">General Consultation</SelectItem>
-                    <SelectItem value="billing" className="rounded-xl py-3 px-4">Billing & Payments</SelectItem>
-                    <SelectItem value="emergency" className="rounded-xl py-3 px-4 text-red-600">Emergency Services</SelectItem>
-                    <SelectItem value="lab" className="rounded-xl py-3 px-4">Laboratory / Testing</SelectItem>
+                        <SelectContent className="rounded-lg">
+                          {DEPARTMENTS.map((department) => (
+                            <SelectItem key={department.value} value={department.value}>
+                              {department.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="p-10 flex flex-col lg:flex-row items-center justify-between gap-10">
-                    <div className="text-center lg:text-left">
-                      <p className="text-sm font-bold text-slate-500 uppercase mb-2">Currently Serving</p>
-                      <div className="text-7xl font-black text-white tracking-tighter drop-shadow-[0_0_50px_rgba(255,255,255,0.1)]">
-                        {currentToken}
+                    </CardHeader>
+                    <CardContent className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-6">
+                        <p className="text-xs font-bold uppercase text-slate-500">Currently serving</p>
+                        <p className="mt-3 font-mono text-6xl font-bold tracking-tight">{currentToken}</p>
+                        {notice && <p className="mt-4 text-sm font-medium text-slate-600">{notice}</p>}
                       </div>
-                    </div>
-                    
-                    <div className="flex flex-col gap-4 w-full lg:w-auto">
-                        <Button 
-                            onClick={handleCallNext} 
-                            disabled={loading} 
-                            className="bg-indigo-600 hover:bg-indigo-500 h-24 px-12 rounded-3xl text-2xl font-black shadow-2xl shadow-indigo-500/20 group transition-all active:scale-95"
-                        >
-                            {loading ? "PROCESSING..." : "CALL NEXT"} 
-                            <ChevronRight className="ml-4 h-8 w-8 group-hover:translate-x-2 transition-transform" />
-                        </Button>
-                    </div>
+
+                      <Button onClick={handleCallNext} disabled={loading} className="h-14 rounded-lg px-8 text-base font-bold">
+                        {loading ? "Calling..." : "Call next"}
+                        <ChevronRight className="ml-2 h-5 w-5" />
+                      </Button>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="rounded-lg border-slate-200 shadow-sm">
+                    <CardHeader>
+                      <CardTitle className="text-base">Department load</CardTitle>
+                      <CardDescription>Waiting tokens by counter.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {analytics.departmentCounts.map((department) => (
+                        <div key={department.value} className="space-y-2">
+                          <div className="flex items-center justify-between text-sm font-semibold">
+                            <span>{department.shortLabel}</span>
+                            <span>{department.count}</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className="h-full rounded-full bg-blue-700"
+                              style={{ width: `${Math.max(8, Math.min(100, department.count * 18))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                </div>
+              </>
+            )}
+
+            {activeTab === "Queue Management" && (
+              <QueueRegistry queue={filteredQueue} searchTerm={searchTerm} onSearchTermChange={setSearchTerm} />
+            )}
+
+            {activeTab === "Analytics" && (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <Card className="rounded-lg border-slate-200 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Queue mix</CardTitle>
+                    <CardDescription>Current waiting distribution.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {analytics.departmentCounts.map((department) => (
+                      <div key={department.value} className="rounded-lg border border-slate-200 p-4">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="font-semibold">{department.label}</span>
+                          <span className="font-bold text-blue-700">{department.count}</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-slate-100">
+                          <div className="h-2 rounded-full bg-blue-700" style={{ width: `${Math.max(6, department.count * 18)}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+
+                <Card className="rounded-lg border-slate-200 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Operational notes</CardTitle>
+                    <CardDescription>Snapshot generated from live queue state.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid gap-3">
+                    <Insight label="Longest line" value={`${analytics.avgWait / 5} people`} />
+                    <Insight label="Next refresh" value="5 seconds" />
+                    <Insight label="Active department" value={getDepartmentLabel(adminDepartment)} />
                   </CardContent>
                 </Card>
               </div>
             )}
 
-            {activeTab === "Queue Management" && (
-              <Card className="bg-white/[0.02] border-white/5 rounded-3xl animate-in fade-in duration-500">
-                <CardHeader className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 p-8">
-                  <div>
-                    <CardTitle className="text-2xl font-black text-white">Queue Registry</CardTitle>
-                    <CardDescription className="text-slate-500 font-medium">Live logs of every generated token.</CardDescription>
-                  </div>
-                  <div className="relative w-full md:w-80">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                    <Input 
-                        placeholder="Search ID or Dept..." 
-                        value={searchTerm} 
-                        onChange={(e) => setSearchTerm(e.target.value)} 
-                        className="pl-11 h-12 bg-white/5 border-white/5 rounded-xl" 
-                    />
-                  </div>
+            {activeTab === "Staff" && (
+              <Card className="rounded-lg border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Staff directory</CardTitle>
+                  <CardDescription>Counter assignments for the current shift.</CardDescription>
                 </CardHeader>
-                <CardContent className="px-8 pb-8">
-                  <div className="rounded-2xl border border-white/5 overflow-hidden">
-                    <Table>
-                      <TableHeader className="bg-white/5">
-                        <TableRow className="border-white/5 hover:bg-transparent">
-                          <TableHead className="text-[10px] font-black uppercase text-slate-500">Token ID</TableHead>
-                          <TableHead className="text-[10px] font-black uppercase text-slate-500">Department</TableHead>
-                          <TableHead className="text-[10px] font-black uppercase text-slate-500 text-right">Status</TableHead>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Operator</TableHead>
+                        <TableHead>Terminal</TableHead>
+                        <TableHead className="text-right">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {[
+                        { name: "Vijay Kshirsagar", term: "Counter 01", status: "Online" },
+                        { name: "Siddharth Gawari", term: "Counter 02", status: "Break" },
+                        { name: "Hemant Patil", term: "Front Desk", status: "Offline" },
+                      ].map((staff) => (
+                        <TableRow key={staff.name}>
+                          <TableCell className="font-semibold">{staff.name}</TableCell>
+                          <TableCell className="text-slate-500">{staff.term}</TableCell>
+                          <TableCell className="text-right">
+                            <Badge className={staff.status === "Online" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                              {staff.status}
+                            </Badge>
+                          </TableCell>
                         </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredQueue.map((item) => (
-                          <TableRow key={item.token_number} className="border-white/5 hover:bg-white/[0.02] transition-colors">
-                            <TableCell className="font-mono font-black text-indigo-400 py-5">{item.token_number}</TableCell>
-                            <TableCell className="capitalize font-bold text-slate-300">{item.department}</TableCell>
-                            <TableCell className="text-right">
-                              <Badge className={`rounded-lg px-3 py-1 border-0 font-bold ${
-                                item.status === 'called' ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'
-                              }`}>
-                                {item.status.toUpperCase()}
-                              </Badge>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </CardContent>
               </Card>
             )}
 
-            {activeTab === "Analytics" && (
-              <div className="space-y-6 animate-in fade-in duration-500">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Card className="bg-white/[0.02] border-white/5 p-8 rounded-3xl">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="font-bold text-xl">Peak Hours</h3>
-                      <TrendingUp className="text-emerald-500" />
-                    </div>
-                    <div className="h-48 flex items-end gap-2 px-2">
-                       {[40, 70, 45, 90, 65, 30, 85].map((h, i) => (
-                         <div key={i} className="flex-1 bg-indigo-500/20 hover:bg-indigo-500/40 rounded-t-lg transition-all" style={{ height: `${h}%` }} />
-                       ))}
-                    </div>
-                    <div className="flex justify-between mt-4 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                      <span>9AM</span><span>12PM</span><span>3PM</span><span>6PM</span>
-                    </div>
-                  </Card>
-                  <Card className="bg-white/[0.02] border-white/5 p-8 rounded-3xl">
-                    <h3 className="font-bold text-xl mb-6">Department Distribution</h3>
-                    <div className="space-y-4">
-                      {['Billing & Payments', 'General Consultation', 'Emergency Services'].map((dept, i) => (
-                        <div key={dept} className="space-y-2">
-                          <div className="flex justify-between text-sm font-bold">
-                            <span>{dept}</span>
-                            <span>{85 - (i * 20)}%</span>
-                          </div>
-                          <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden">
-                            <div className="h-full bg-indigo-600" style={{ width: `${85 - (i * 20)}%` }} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                </div>
-              </div>
-            )}
-
-            {activeTab === "Staff" && (
-              <Card className="bg-white/[0.02] border-white/5 rounded-3xl overflow-hidden animate-in fade-in duration-500">
-                <CardHeader className="p-8 border-b border-white/5">
-                  <CardTitle className="text-2xl font-black">Staff Directory</CardTitle>
-                  <CardDescription>Manage active terminal operators.</CardDescription>
+            {activeTab === "Notifications" && (
+              <Card className="max-w-2xl rounded-lg border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Notification settings</CardTitle>
+                  <CardDescription>Controls for counter and customer alerts.</CardDescription>
                 </CardHeader>
-                <Table>
-                  <TableHeader className="bg-white/5">
-                    <TableRow className="border-white/5"><TableHead>Operator</TableHead><TableHead>Terminal</TableHead><TableHead className="text-right">Status</TableHead></TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {[
-                      { name: "Vijay Kshirsagar", term: "Counter 01", status: "Online" },
-                      { name: "Siddharth Gawari", term: "Counter 02", status: "Break" },
-                      { name: "Hemant Patil", term: "Front Desk", status: "Offline" }
-                    ].map((staff) => (
-                      <TableRow key={staff.name} className="border-white/5">
-                        <TableCell className="font-bold py-4">{staff.name}</TableCell>
-                        <TableCell className="text-slate-400 font-medium">{staff.term}</TableCell>
-                        <TableCell className="text-right">
-                          <Badge className={staff.status === "Online" ? "bg-emerald-500/20 text-emerald-500 border-0" : "bg-white/5 text-slate-500 border-0"}>
-                            {staff.status}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <CardContent className="space-y-4">
+                  <NotificationRow title="Audio chime" description="Play a short sound when a token is called." checked={notifications} onCheckedChange={setNotifications} />
+                  <NotificationRow title="Queue pressure alerts" description="Flag departments with more than ten waiting tokens." checked />
+                  <NotificationRow title="Customer SMS" description="Reserved for a future SMS provider integration." checked={false} />
+                </CardContent>
               </Card>
             )}
 
-            {activeTab === "Notifications" && (
-              <div className="max-w-2xl space-y-4 animate-in fade-in duration-500">
-                {[
-                  { title: "Audio Chime", desc: "Play 'ding.mp3' when calling next token", state: notifications, set: setNotifications },
-                  { title: "Push Alerts", desc: "Notify staff when waiting queue > 10", state: true },
-                  { title: "Customer SMS", desc: "Send SMS when customer's turn is near", state: false }
-                ].map((item, i) => (
-                  <Card key={i} className="bg-white/[0.02] border-white/5 p-6 rounded-2xl flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-white">{item.title}</h4>
-                      <p className="text-xs text-slate-500">{item.desc}</p>
-                    </div>
-                    <Switch checked={item.state} onCheckedChange={item.set} />
-                  </Card>
-                ))}
-              </div>
-            )}
-
             {activeTab === "Settings" && (
-              <div className="max-w-2xl space-y-6 animate-in fade-in duration-500">
-                <Card className="bg-white/[0.02] border-white/5 p-8 rounded-3xl">
-                  <h3 className="font-bold text-xl mb-4 flex items-center gap-2"><Monitor className="h-5 w-5 text-indigo-500" /> Terminal Config</h3>
-                  <div className="grid grid-cols-2 gap-4">
+              <div className="grid max-w-3xl gap-6">
+                <Card className="rounded-lg border-slate-200 shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Monitor className="h-5 w-5 text-blue-700" />
+                      Terminal configuration
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase">Terminal Name</label>
-                      <Input className="bg-white/5 border-white/5" defaultValue="Main-Terminal-Alpha" />
+                      <label className="text-sm font-semibold text-slate-700">Terminal name</label>
+                      <Input className="h-10 rounded-lg" defaultValue="Main Terminal" />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase">Auto-Refresh (sec)</label>
-                      <Input className="bg-white/5 border-white/5" defaultValue="5" />
+                      <label className="text-sm font-semibold text-slate-700">Refresh seconds</label>
+                      <Input className="h-10 rounded-lg" defaultValue="5" />
                     </div>
-                  </div>
-                  <Button className="mt-6 bg-indigo-600 hover:bg-indigo-700 w-full rounded-xl font-bold">Update System</Button>
+                    <Button className="h-10 rounded-lg font-bold sm:col-span-2">Update settings</Button>
+                  </CardContent>
                 </Card>
 
-                <Card className="bg-red-500/5 border-red-500/10 p-8 rounded-3xl">
-                  <h3 className="font-bold text-xl text-red-500 mb-2 flex items-center gap-2"><Trash2 className="h-5 w-5" /> Danger Zone</h3>
-                  <p className="text-sm text-slate-500 mb-4">Resetting the daily queue will clear all history for today.</p>
-                  <Button variant="destructive" className="rounded-xl font-bold px-8">Reset Daily Queue</Button>
+                <Card className="rounded-lg border-red-200 bg-red-50 shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-red-700">
+                      <Trash2 className="h-5 w-5" />
+                      Daily reset
+                    </CardTitle>
+                    <CardDescription className="text-red-700/70">Clears the active queue for a new operating day.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button variant="destructive" className="rounded-lg font-bold">Reset daily queue</Button>
+                  </CardContent>
                 </Card>
               </div>
             )}
-
           </main>
         </SidebarInset>
       </div>
     </SidebarProvider>
+  )
+}
+
+interface MetricCardProps {
+  label: string
+  value: number | string
+  icon: typeof Users
+  tone: "blue" | "emerald" | "amber"
+}
+
+function MetricCard({ label, value, icon: Icon, tone }: MetricCardProps) {
+  const toneClass = {
+    blue: "bg-blue-50 text-blue-700",
+    emerald: "bg-emerald-50 text-emerald-700",
+    amber: "bg-amber-50 text-amber-700",
+  }[tone]
+
+  return (
+    <Card className="rounded-lg border-slate-200 shadow-sm">
+      <CardContent className="flex items-center justify-between p-5">
+        <div>
+          <p className="text-xs font-bold uppercase text-slate-500">{label}</p>
+          <p className="mt-2 text-3xl font-bold tracking-tight">{value}</p>
+        </div>
+        <div className={`flex h-11 w-11 items-center justify-center rounded-lg ${toneClass}`}>
+          <Icon className="h-5 w-5" />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+interface QueueRegistryProps {
+  queue: QueueToken[]
+  searchTerm: string
+  onSearchTermChange: (value: string) => void
+}
+
+function QueueRegistry({ queue, searchTerm, onSearchTermChange }: QueueRegistryProps) {
+  return (
+    <Card className="rounded-lg border-slate-200 shadow-sm">
+      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <CardTitle>Queue registry</CardTitle>
+          <CardDescription>Live tokens currently waiting or being served.</CardDescription>
+        </div>
+        <div className="relative w-full sm:w-80">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            placeholder="Search token, department, status"
+            value={searchTerm}
+            onChange={(event) => onSearchTermChange(event.target.value)}
+            className="h-10 rounded-lg pl-9"
+          />
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-hidden rounded-lg border border-slate-200">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Token</TableHead>
+                <TableHead>Department</TableHead>
+                <TableHead className="text-right">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {queue.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={3} className="h-24 text-center text-slate-500">
+                    No matching tokens.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                queue.map((item) => (
+                  <TableRow key={`${item.id || item.token_number}-${item.status}`}>
+                    <TableCell className="font-mono font-bold text-blue-700">{item.token_number}</TableCell>
+                    <TableCell className="font-medium">{getDepartmentLabel(item.department)}</TableCell>
+                    <TableCell className="text-right">
+                      <Badge className={getStatusClass(item.status)}>{getStatusLabel(item.status)}</Badge>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function Insight({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-3">
+      <span className="text-sm font-semibold text-slate-500">{label}</span>
+      <span className="font-bold">{value}</span>
+    </div>
+  )
+}
+
+function NotificationRow({
+  title,
+  description,
+  checked,
+  onCheckedChange,
+}: {
+  title: string
+  description: string
+  checked: boolean
+  onCheckedChange?: (checked: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-slate-200 p-4">
+      <div>
+        <p className="font-semibold">{title}</p>
+        <p className="text-sm text-slate-500">{description}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
   )
 }

@@ -19,27 +19,19 @@ export default function Home() {
   }
 
   const handleLogout = () => {
-    // 🛠️ The Fix: Clear all stored data so the next user starts fresh
     localStorage.removeItem("user")
+    localStorage.removeItem("userId")
     localStorage.removeItem("token")
     localStorage.removeItem("activeToken")
     localStorage.removeItem("activeDept")
-    
-    // Switch view back to login screen
     setCurrentView("auth")
   }
 
   return (
     <>
-      {currentView === "auth" && (
-        <AuthView onLogin={handleLogin} onAdminLogin={handleAdminLogin} />
-      )}
-      {currentView === "user" && (
-        <UserDashboard onLogout={handleLogout} />
-      )}
-      {currentView === "admin" && (
-        <AdminDashboard onLogout={handleLogout} />
-      )}
+      {currentView === "auth" && <AuthView onLogin={handleLogin} onAdminLogin={handleAdminLogin} />}
+      {currentView === "user" && <UserDashboard onLogout={handleLogout} />}
+      {currentView === "admin" && <AdminDashboard onLogout={handleLogout} />}
     </>
   )
 }
