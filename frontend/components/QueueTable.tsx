@@ -1,31 +1,20 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import axios from "axios"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useEffect, useState } from "react"
+import api from "@/src/lib/api"
+import { QueueToken, getDepartmentLabel, getStatusClass, getStatusLabel } from "@/src/lib/queue"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 export function QueueTable() {
-  const [tokens, setTokens] = useState([])
+  const [tokens, setTokens] = useState<QueueToken[]>([])
 
   const fetchTokens = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/queue/status')
+      const res = await api.get<QueueToken[]>("/queue/status")
       setTokens(res.data)
     } catch (err) {
       console.error("Fetch error:", err)
-    }
-  }
-
-  // Handle "Call Next" action
-  const handleCall = async (tokenId: number) => {
-    try {
-      // You'll need this endpoint in your controller later
-      await axios.put(`http://localhost:5000/api/queue/call/${tokenId}`)
-      fetchTokens() // Refresh list
-    } catch (err) {
-      alert("Error calling token")
     }
   }
 
@@ -36,32 +25,22 @@ export function QueueTable() {
   }, [])
 
   return (
-    <div className="rounded-md border border-border bg-card">
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Token No</TableHead>
+            <TableHead>Token</TableHead>
             <TableHead>Department</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Action</TableHead>
+            <TableHead className="text-right">Status</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {tokens.map((token: any) => (
-            <TableRow key={token.id}>
-              <TableCell className="font-bold text-primary">{token.token_number}</TableCell>
-              <TableCell className="capitalize">{token.department}</TableCell>
-              <TableCell>
-                <Badge variant={token.status === "called" ? "default" : "secondary"}>
-                  {token.status}
-                </Badge>
-              </TableCell>
+          {tokens.map((token) => (
+            <TableRow key={`${token.id || token.token_number}-${token.status}`}>
+              <TableCell className="font-mono font-bold text-blue-700">{token.token_number}</TableCell>
+              <TableCell>{getDepartmentLabel(token.department)}</TableCell>
               <TableCell className="text-right">
-                {token.status === "waiting" && (
-                  <Button size="sm" onClick={() => handleCall(token.id)}>
-                    Call Next
-                  </Button>
-                )}
+                <Badge className={getStatusClass(token.status)}>{getStatusLabel(token.status)}</Badge>
               </TableCell>
             </TableRow>
           ))}
